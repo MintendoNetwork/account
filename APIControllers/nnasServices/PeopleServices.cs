@@ -157,7 +157,7 @@ public class PeopleController : nnasService
                 using (NpgsqlCommand command = new NpgsqlCommand(query, connection))
                 {
                 
-                    command.Parameters.AddWithValue("@Username", username);
+                    command.Parameters.AddWithValue("Username", username);
                     await connection.OpenAsync();
 
                     object result = await command.ExecuteScalarAsync();
@@ -315,7 +315,7 @@ public class PeopleController : nnasService
             using (NpgsqlConnection connection = new NpgsqlConnection(Settings.ConnectionString))
             using (NpgsqlCommand command = new NpgsqlCommand(query, connection))
             {
-                command.Parameters.AddWithValue("@Pid", pid);
+                command.Parameters.AddWithValue("Pid", pid);
                 await connection.OpenAsync();
 
                 using (NpgsqlDataReader rd = await command.ExecuteReaderAsync())
