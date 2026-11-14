@@ -41,7 +41,8 @@ public static class DatabaseInitializer
             email_reachable  BOOLEAN NOT NULL DEFAULT FALSE,
             access_level      INTEGER NOT NULL DEFAULT 0
         );
-
+        CREATE UNIQUE INDEX IF NOT EXISTS mnids_username_lower_key ON mnids (username_lower);
+        CREATE UNIQUE INDEX IF NOT EXISTS mnids_pid_key ON mnids (pid);
 
         CREATE TABLE IF NOT EXISTS oauthtokens (
             token          TEXT PRIMARY KEY, 
