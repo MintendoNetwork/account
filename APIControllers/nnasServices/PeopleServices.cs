@@ -93,12 +93,7 @@ public class PeopleController : nnasService
             await Utils.CreateNNASError(HttpContext, 400, "0002", "serialNumber format is invalid");
             return;
         }
-        else if (!int.TryParse(platformStr, out int platform))
-        {
-            await Utils.CreateNNASError(HttpContext, 400, "1600", "Unable to process request", "Bad Request");
-            return;
-        }
-        else if (person == null || string.IsNullOrEmpty(person.UserId) || !AllowedAccountCountries.Contains(person.Country ?? "") || !AllowedAccountLanguages.Contains(person.Language ?? "") || string.IsNullOrEmpty(person.Password) || string.IsNullOrEmpty(person.BirthDate) || string.IsNullOrEmpty(person.Gender) || string.IsNullOrEmpty(person.Country) || string.IsNullOrEmpty(person.Language) || person.Region == 0 || string.IsNullOrEmpty(person.TzName) || person.Email == null || string.IsNullOrEmpty(person.Email.Address) || person.Mii == null || string.IsNullOrEmpty(person.Mii.Name))
+        else if (!int.TryParse(platformStr, out int platform) || person == null || string.IsNullOrEmpty(person.UserId) || !AllowedAccountCountries.Contains(person.Country ?? "") || !AllowedAccountLanguages.Contains(person.Language ?? "") || string.IsNullOrEmpty(person.Password) || string.IsNullOrEmpty(person.BirthDate) || string.IsNullOrEmpty(person.Gender) || string.IsNullOrEmpty(person.Country) || string.IsNullOrEmpty(person.Language) || person.Region == 0 || string.IsNullOrEmpty(person.TzName) || person.Email == null || string.IsNullOrEmpty(person.Email.Address) || person.Mii == null || string.IsNullOrEmpty(person.Mii.Name))
         {
             await Utils.CreateNNASError(HttpContext, 400, "1600", "Unable to process request", "Bad Request");
             return;
