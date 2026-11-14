@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using Microsoft.AspNetCore.Mvc;
 using System.Threading.Tasks;
 using System.Text;
-using BCrypt.Net;
 using Npgsql;
 
 public class PeopleController : nnasService
@@ -34,7 +33,6 @@ public class PeopleController : nnasService
     private static long RandomUInt32()
     => BitConverter.ToUInt32(RandomNumberGenerator.GetBytes(4));
 
-
  /*
     [GET]
     Implementation of https://account.nintendo.net/v1/api/people/USERNAME
@@ -43,47 +41,32 @@ public class PeopleController : nnasService
     [HttpGet("people/{username}")]
     public async Task GetUser(string username)
     {
-
-        string query = "SELECT EXISTS(SELECT 1 FROM mnids WHERE username = @Username)";
+        string query = "SELECT EXISTS(SELECT 1 FROM mnids WHERE username_lower = @UsernameLower)";
 
         try
         {
-
             using (NpgsqlConnection connection = new NpgsqlConnection(Settings.ConnectionString))
+            using (NpgsqlCommand command = new NpgsqlCommand(query, connection))
             {
-                using (NpgsqlCommand command = new NpgsqlCommand(query, connection))
+                command.Parameters.AddWithValue("@UsernameLower", username.ToLowerInvariant());
+                await connection.OpenAsync();
+
+                object? result = await command.ExecuteScalarAsync();
+                bool userExists = result is bool exists && exists;
+
+                if (userExists)
                 {
-                
-                    command.Parameters.AddWithValue("@Username", username);
-                    await connection.OpenAsync();
-
-                    object result = await command.ExecuteScalarAsync();
-                    bool userExists = result is bool exists && exists;
-
-                    if (userExists)
-                    {
-                        await Utils.CreateNNASError(HttpContext, 400, "0100", "Account ID already exists");
-                        return;
-                    }
-                    else
-                    {
-                        HttpContext.Response.ContentType = "text/xml";
-                        return;
-                    }
+                    await Utils.CreateNNASError(HttpContext, 400, "0100", "Account ID already exists");
+                    return;
                 }
+
+                HttpContext.Response.ContentType = "text/xml";
             }
-        }
-        catch (NpgsqlException pgEx)
-        {
-            System.Diagnostics.Debug.WriteLine($"pgex DB Error Details: {pgEx.ToString()}");
-            await Utils.CreateNNASError(HttpContext, 500, "2001", "Internal server error");
-            throw;
         }
         catch (Exception ex)
         {
-               System.Diagnostics.Debug.WriteLine($"DB Error Details: {ex.ToString()}");
+            System.Diagnostics.Debug.WriteLine($"DB Error Details: {ex}");
             await Utils.CreateNNASError(HttpContext, 500, "2001", "Internal server error");
-            throw;
         }
     }
 
@@ -98,18 +81,24 @@ public class PeopleController : nnasService
         string deviceIdStr = HttpContext.Request.Headers["X-Nintendo-Device-ID"].ToString();
         string serial = HttpContext.Request.Headers["X-Nintendo-Serial-Number"].ToString();
         string cert = HttpContext.Request.Headers["X-Nintendo-Device-Cert"].ToString();
+        string platformStr = HttpContext.Request.Headers["X-Nintendo-Platform-ID"].ToString();
 
-        if (deviceIdStr == null || cert == null) 
+        if (string.IsNullOrEmpty(deviceIdStr) || string.IsNullOrEmpty(cert) || !long.TryParse(deviceIdStr, out long deviceId))
         {
             await Utils.CreateNNASError(HttpContext, 401, "0113", "Unauthorized device", "device_id");
             return;
         }
-        else if (serial == null) 
+        else if (string.IsNullOrEmpty(serial))
         {
             await Utils.CreateNNASError(HttpContext, 400, "0002", "serialNumber format is invalid");
             return;
         }
-        else if (cert == null || person == null || string.IsNullOrEmpty(person?.UserId) || !AllowedAccountCountries.Contains(person.Country ?? "") || !AllowedAccountLanguages.Contains(person.Language ?? "") || string.IsNullOrEmpty(person.UserId) || string.IsNullOrEmpty(person.Password) || string.IsNullOrEmpty(person.BirthDate) || string.IsNullOrEmpty(person.Gender) || string.IsNullOrEmpty(person.Country) || string.IsNullOrEmpty(person.Language) || person.Region == 0 || string.IsNullOrEmpty(person.TzName) || person.Email == null || string.IsNullOrEmpty(person.Email.Address) || person.Mii == null || string.IsNullOrEmpty(person.Mii.Name))
+        else if (!int.TryParse(platformStr, out int platform))
+        {
+            await Utils.CreateNNASError(HttpContext, 400, "1600", "Unable to process request", "Bad Request");
+            return;
+        }
+        else if (person == null || string.IsNullOrEmpty(person.UserId) || !AllowedAccountCountries.Contains(person.Country ?? "") || !AllowedAccountLanguages.Contains(person.Language ?? "") || string.IsNullOrEmpty(person.Password) || string.IsNullOrEmpty(person.BirthDate) || string.IsNullOrEmpty(person.Gender) || string.IsNullOrEmpty(person.Country) || string.IsNullOrEmpty(person.Language) || person.Region == 0 || string.IsNullOrEmpty(person.TzName) || person.Email == null || string.IsNullOrEmpty(person.Email.Address) || person.Mii == null || string.IsNullOrEmpty(person.Mii.Name))
         {
             await Utils.CreateNNASError(HttpContext, 400, "1600", "Unable to process request", "Bad Request");
             return;
@@ -119,10 +108,25 @@ public class PeopleController : nnasService
             await Utils.CreateNNASError(HttpContext, 400, "0101", "Account ID is not acceptable", "userId");
             return;
         }
-    
-        string username = person.UserId;
 
-        string query = "SELECT EXISTS(SELECT 1 FROM mnids WHERE username = @Username)";
+        string userId = person.UserId;
+        string usernameLower = userId.ToLowerInvariant();
+
+        if (usernameLower == person.Password.ToLowerInvariant())
+        {
+            await Utils.CreateNNASError(HttpContext, 400, "1107", "Password cannot be the same as User ID", "password");
+            return;
+        }
+
+        long? offset = await Utils.GetTimezoneOffset(HttpContext, person.Country!, person.Language!, person.TzName!);
+        if (offset == null)
+        {
+            await Utils.CreateNNASError(HttpContext, 400, "1600", "Unable to process request", "tz_name");
+            return;
+        }
+
+        string existsQuery = "SELECT EXISTS(SELECT 1 FROM mnids WHERE username_lower = @UsernameLower)";
+        string pidExistsQuery = "SELECT EXISTS(SELECT 1 FROM mnids WHERE pid = @Pid)";
 
         string create = @"
             INSERT INTO mnids (
@@ -144,57 +148,65 @@ public class PeopleController : nnasService
 
         string deviceCreate = @"
             INSERT INTO devices (model, device_id, serial, certificate_hash)
-            VALUES (@model, @DeviceId, @Serial, @CertHash)
+            VALUES (@Model, @DeviceId, @Serial, @CertHash)
             ON CONFLICT (certificate_hash)
             DO UPDATE SET device_id = EXCLUDED.device_id, serial = EXCLUDED.serial
             RETURNING id;";
 
+        string insertPidQuery = "INSERT INTO device_linked_pids (pid, device_id) VALUES (@Pid, @DeviceId)";
+
         try
         {
-
             using (NpgsqlConnection connection = new NpgsqlConnection(Settings.ConnectionString))
             {
-                using (NpgsqlCommand command = new NpgsqlCommand(query, connection))
+                await connection.OpenAsync();
+
+                await using (NpgsqlTransaction tx = await connection.BeginTransactionAsync())
                 {
-                
-                    command.Parameters.AddWithValue("Username", username);
-                    await connection.OpenAsync();
-
-                    object result = await command.ExecuteScalarAsync();
-                    bool userExists = result is bool exists && exists;
-
-                    if (userExists)
+                    await using (NpgsqlCommand existsCmd = new NpgsqlCommand(existsQuery, connection, tx))
                     {
-                        await Utils.CreateNNASError(HttpContext, 400, "0100", "Account ID already exists", "userId");
+                        existsCmd.Parameters.AddWithValue("UsernameLower", usernameLower);
+                        object? existsResult = await existsCmd.ExecuteScalarAsync();
+                        if (existsResult is bool userExists && userExists)
+                        {
+                            await Utils.CreateNNASError(HttpContext, 400, "0100", "Account ID already exists", "userId");
+                            return;
+                        }
+                    }
+
+                    int pid = 0;
+                    bool pidFound = false;
+                    for (int attempt = 0; attempt < 10 && !pidFound; attempt++)
+                    {
+                        int candidate = RandomNumberGenerator.GetInt32(Utils.Min, Utils.Max);
+                        await using (NpgsqlCommand pidCmd = new NpgsqlCommand(pidExistsQuery, connection, tx))
+                        {
+                            pidCmd.Parameters.AddWithValue("@Pid", candidate);
+                            object? pidResult = await pidCmd.ExecuteScalarAsync();
+                            bool taken = pidResult is bool t && t;
+                            if (!taken)
+                            {
+                                pid = candidate;
+                                pidFound = true;
+                            }
+                        }
+                    }
+
+                    if (!pidFound)
+                    {
+                        await Utils.CreateNNASError(HttpContext, 500, "2001", "Internal server error");
                         return;
                     }
-                    else
-                    {               
-                    using (NpgsqlCommand cmd = new NpgsqlCommand(create, connection))
-                    {
-                        string nexPassword = Utils.GenerateNexPassword();
-                        string lower = person.UserId.ToLowerInvariant();
-                        string lower_pass = person.Password.ToLowerInvariant(); 
-                        if (lower == lower_pass)
-                        {
-                            await Utils.CreateNNASError(HttpContext, 400, "1107", "Password cannot be the same as User ID", "password");
-                            return;
-                        }
-                        // TODO: Maybe check if the pid exists beforehand to avoid collisions? The chances are very low but not zero. (1 in 1.8 billion chance of collision, so it's maybe not an issue :P )
-                        int pid = new Random().Next(Utils.Min, Utils.Max);
-                        string passwordHash = Utils.encryptNintendoHash(person.Password, pid);
-                        string user_id = person.UserId;
-                        long? offset = await Utils.GetTimezoneOffset(HttpContext, person.Country!, person.Language!, person.TzName!);
-                        if (offset == null)
-                        {
-                            await Utils.CreateNNASError(HttpContext, 400, "1600", "Unable to process request", "tz_name");
-                            return;
-                        }
 
+                    string nexPassword = Utils.GenerateNexPassword();
+                    string passwordHash = Utils.encryptNintendoHash(person.Password, pid);
+
+                    await using (NpgsqlCommand cmd = new NpgsqlCommand(create, connection, tx))
+                    {
                         cmd.Parameters.AddWithValue("TimezoneOffset", offset.Value);
                         cmd.Parameters.AddWithValue("Pid", pid);
-                        cmd.Parameters.AddWithValue("Username", user_id);
-                        cmd.Parameters.AddWithValue("UsernameLower", user_id.ToLowerInvariant());
+                        cmd.Parameters.AddWithValue("Username", userId);
+                        cmd.Parameters.AddWithValue("UsernameLower", usernameLower);
                         cmd.Parameters.AddWithValue("Password", passwordHash);
                         cmd.Parameters.AddWithValue("Birthdate", person.BirthDate!);
                         cmd.Parameters.AddWithValue("Gender", person.Gender!);
@@ -202,7 +214,7 @@ public class PeopleController : nnasService
                         cmd.Parameters.AddWithValue("Language", person.Language!);
                         cmd.Parameters.AddWithValue("Region", person.Region);
 
-                        cmd.Parameters.AddWithValue("TimezoneName", person.TzName);
+                        cmd.Parameters.AddWithValue("TimezoneName", person.TzName!);
 
                         cmd.Parameters.AddWithValue("EmailAddress", person.Email!.Address!.ToLowerInvariant());
                         cmd.Parameters.AddWithValue("EmailId", RandomUInt32());
@@ -221,68 +233,68 @@ public class PeopleController : nnasService
 
                         cmd.Parameters.AddWithValue("Marketing", person.MarketingFlag == "Y");
                         cmd.Parameters.AddWithValue("OffDevice", person.OffDeviceFlag == "Y");
-                    
+
                         await cmd.ExecuteNonQueryAsync();
-                        long deviceId = long.Parse(deviceIdStr);
-
-                        // Hashes the certificate using SHA256 to store in the database
-                        byte[] inputBytes = Encoding.UTF8.GetBytes(cert);
-                        byte[] hashBytes = CryptographicOperations.HashData(HashAlgorithmName.SHA256, inputBytes);
-                        string certHash = Convert.ToHexString(hashBytes);
-                        int platform = int.Parse(HttpContext.Request.Headers["X-Nintendo-Platform-ID"]);
-                        object? deviceRowIdObj;
-                        await using (var insert = new NpgsqlCommand(deviceCreate, connection))
-                        {
-                            insert.Parameters.AddWithValue("DeviceId", deviceId);
-                            insert.Parameters.AddWithValue("Serial", serial);
-                            insert.Parameters.AddWithValue("CertHash", certHash);
-                            insert.Parameters.AddWithValue("Model", platform switch { 0 => "ctr", 1 => "wup", _ => "unknown" });
-
-                            deviceRowIdObj = await insert.ExecuteScalarAsync();
-                        }
-
-                        long deviceRowId = Convert.ToInt64(deviceRowIdObj);
-
-                        string insertPidQuery = "INSERT INTO device_linked_pids (pid, device_id) VALUES (@Pid, @DeviceId)";
-                        await using (var insert = new NpgsqlCommand(insertPidQuery, connection))
-                        {
-                            insert.Parameters.AddWithValue("Pid", pid);
-                            insert.Parameters.AddWithValue("DeviceId", deviceRowId); // devices.id, not the ACTUAL device ID
-                            await insert.ExecuteNonQueryAsync();
-                        }
-
-
-                        using (NpgsqlCommand nexCmd = new NpgsqlCommand(nexCreate, connection))
-                        {
-                            nexCmd.Parameters.AddWithValue("Pid", pid);
-                            nexCmd.Parameters.AddWithValue("Password", nexPassword);
-                            await nexCmd.ExecuteNonQueryAsync();
-                        }
-
-                        string PersonResponse =
-                            "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n" +
-                            "<person>\n" +
-                            "    <pid>" + pid + "</pid>\n" +
-                            "</person>";
-
-                        await HttpContext.Response.WriteXmlAsync(PersonResponse, 201);
-                        return;
                     }
+
+                    // Hashes the certificate using SHA256 to store in the database
+                    byte[] inputBytes = Encoding.UTF8.GetBytes(cert);
+                    byte[] hashBytes = CryptographicOperations.HashData(HashAlgorithmName.SHA256, inputBytes);
+                    string certHash = Convert.ToHexString(hashBytes);
+
+                    object? deviceRowIdObj;
+                    await using (NpgsqlCommand insert = new NpgsqlCommand(deviceCreate, connection, tx))
+                    {
+                        insert.Parameters.AddWithValue("DeviceId", deviceId);
+                        insert.Parameters.AddWithValue("Serial", serial);
+                        insert.Parameters.AddWithValue("CertHash", certHash);
+                        insert.Parameters.AddWithValue("Model", platform switch { 0 => "ctr", 1 => "wup", _ => "unknown" });
+
+                        deviceRowIdObj = await insert.ExecuteScalarAsync();
                     }
+
+                    long deviceRowId = Convert.ToInt64(deviceRowIdObj);
+
+                    await using (NpgsqlCommand insert = new NpgsqlCommand(insertPidQuery, connection, tx))
+                    {
+                        insert.Parameters.AddWithValue("Pid", pid);
+                        insert.Parameters.AddWithValue("DeviceId", deviceRowId); // devices.id, not the ACTUAL device ID
+                        await insert.ExecuteNonQueryAsync();
+                    }
+
+                    await using (NpgsqlCommand nexCmd = new NpgsqlCommand(nexCreate, connection, tx))
+                    {
+                        nexCmd.Parameters.AddWithValue("Pid", pid);
+                        nexCmd.Parameters.AddWithValue("Password", nexPassword);
+                        await nexCmd.ExecuteNonQueryAsync();
+                    }
+
+                    await tx.CommitAsync();
+
+                    string PersonResponse =
+                        "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n" +
+                        "<person>\n" +
+                        "    <pid>" + pid + "</pid>\n" +
+                        "</person>";
+
+                    await HttpContext.Response.WriteXmlAsync(PersonResponse, 201);
                 }
             }
         }
+        catch (PostgresException pgEx) when (pgEx.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            System.Diagnostics.Debug.WriteLine($"Unique violation: {pgEx}");
+            await Utils.CreateNNASError(HttpContext, 400, "0100", "Account ID already exists", "userId");
+        }
         catch (NpgsqlException pgEx)
         {
-            System.Diagnostics.Debug.WriteLine($"pgex DB Error Details: {pgEx.ToString()}");
+            System.Diagnostics.Debug.WriteLine($"pgex DB Error Details: {pgEx}");
             await Utils.CreateNNASError(HttpContext, 500, "2001", "Internal server error");
-            throw;
         }
         catch (Exception ex)
         {
-               System.Diagnostics.Debug.WriteLine($"DB Error Details: {ex.ToString()}");
+            System.Diagnostics.Debug.WriteLine($"DB Error Details: {ex}");
             await Utils.CreateNNASError(HttpContext, 500, "2001", "Internal server error");
-            throw;
         }
     }
 
@@ -294,7 +306,6 @@ public class PeopleController : nnasService
     [HttpGet("people/@me/profile")]
     public async Task GetProfile()
     {
-
         // The PID of the logged-in user
         if (HttpContext.Items["pid"] is not int pid)
         {
@@ -339,7 +350,7 @@ public class PeopleController : nnasService
                 }
             }
         }
-        catch (Exception ex)   // covers NpgsqlException too
+        catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"DB Error Details: {ex}");
             await Utils.CreateNNASError(HttpContext, 500, "2001", "Internal server error");
