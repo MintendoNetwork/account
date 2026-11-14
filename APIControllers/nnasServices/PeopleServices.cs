@@ -48,7 +48,7 @@ public class PeopleController : nnasService
             using (NpgsqlConnection connection = new NpgsqlConnection(Settings.ConnectionString))
             using (NpgsqlCommand command = new NpgsqlCommand(query, connection))
             {
-                command.Parameters.AddWithValue("@UsernameLower", username.ToLowerInvariant());
+                command.Parameters.AddWithValue("UsernameLower", username.ToLowerInvariant());
                 await connection.OpenAsync();
 
                 object? result = await command.ExecuteScalarAsync();
@@ -83,7 +83,10 @@ public class PeopleController : nnasService
         string cert = HttpContext.Request.Headers["X-Nintendo-Device-Cert"].ToString();
         string platformStr = HttpContext.Request.Headers["X-Nintendo-Platform-ID"].ToString();
 
-        if (string.IsNullOrEmpty(deviceIdStr) || string.IsNullOrEmpty(cert) || !long.TryParse(deviceIdStr, out long deviceId))
+        long deviceId = 0;
+        int platform = 0;
+
+        if (string.IsNullOrEmpty(deviceIdStr) || string.IsNullOrEmpty(cert) || !long.TryParse(deviceIdStr, out deviceId))
         {
             await Utils.CreateNNASError(HttpContext, 401, "0113", "Unauthorized device", "device_id");
             return;
@@ -93,10 +96,10 @@ public class PeopleController : nnasService
             await Utils.CreateNNASError(HttpContext, 400, "0002", "serialNumber format is invalid");
             return;
         }
-        else if (!int.TryParse(platformStr, out int platform))
+        else if (!int.TryParse(platformStr, out platform))
         {
             await Utils.CreateNNASError(HttpContext, 400, "1600", "Unable to process request", "Bad Request");
-            return;        
+            return;
         }
         else if (person == null || string.IsNullOrEmpty(person.UserId) || !AllowedAccountCountries.Contains(person.Country ?? "") || !AllowedAccountLanguages.Contains(person.Language ?? "") || string.IsNullOrEmpty(person.Password) || string.IsNullOrEmpty(person.BirthDate) || string.IsNullOrEmpty(person.Gender) || string.IsNullOrEmpty(person.Country) || string.IsNullOrEmpty(person.Language) || person.Region == 0 || string.IsNullOrEmpty(person.TzName) || person.Email == null || string.IsNullOrEmpty(person.Email.Address) || person.Mii == null || string.IsNullOrEmpty(person.Mii.Name))
         {
@@ -181,7 +184,7 @@ public class PeopleController : nnasService
                         int candidate = RandomNumberGenerator.GetInt32(Utils.Min, Utils.Max);
                         await using (NpgsqlCommand pidCmd = new NpgsqlCommand(pidExistsQuery, connection, tx))
                         {
-                            pidCmd.Parameters.AddWithValue("@Pid", candidate);
+                            pidCmd.Parameters.AddWithValue("Pid", candidate);
                             object? pidResult = await pidCmd.ExecuteScalarAsync();
                             bool taken = pidResult is bool t && t;
                             if (!taken)
