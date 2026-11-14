@@ -52,7 +52,7 @@ public class AuthenticateMnidAttribute : ActionFilterAttribute
         await using var command = new NpgsqlCommand(
             "SELECT pid FROM oauthtokens WHERE token = @token AND created_at >= NOW() - INTERVAL '1 hour'",
             connection);
-        command.Parameters.AddWithValue("@token", tokenHash);
+        command.Parameters.AddWithValue("token", tokenHash);
 
         object? result = await command.ExecuteScalarAsync();
         return result is null ? null : Convert.ToInt32(result);
