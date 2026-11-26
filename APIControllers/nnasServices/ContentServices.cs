@@ -13,10 +13,10 @@ public class ContentController : nnasService
         public string Area { get; set; } = "";
         public string Language { get; set; } = "";
         public string Name { get; set; } = "";
+        [JsonPropertyName("utc_offset")]
         public int UtcOffset { get; set; }
         public int Order { get; set; }
     }
-
 /*
     [GET]
     Implementation of https://account.nintendo.net/v1/api/content/agreements/TYPE/REGION/VERSION
@@ -84,10 +84,6 @@ public class ContentController : nnasService
     [HttpGet("content/time_zones/{countryCode}/{language}")]
     public async Task GetTimeZones(string countryCode, string language)
     {
-
-        HttpContext.Response.StatusCode = 200;
-        HttpContext.Response.ContentType = "application/xml;charset=UTF-8";
-
         var env = HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>();
         string jsonFilePath = Path.Combine(env.WebRootPath, "data", "timezones.json");
 
@@ -98,8 +94,13 @@ public class ContentController : nnasService
         }
 
         string jsonString = await System.IO.File.ReadAllTextAsync(jsonFilePath);
-            
-        var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true,NumberHandling = JsonNumberHandling.AllowReadingFromString };            
+
+        var jsonOptions = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            NumberHandling = JsonNumberHandling.AllowReadingFromString
+        };
+
         var timezoneDatabase = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<TimeZoneItem>>>>(jsonString, jsonOptions);
 
         if (timezoneDatabase == null || !timezoneDatabase.TryGetValue(countryCode, out var languageDict) || languageDict.Count == 0)
@@ -120,18 +121,22 @@ public class ContentController : nnasService
         foreach (var tz in selectedTimezones)
         {
             xmlBuilder.AppendLine("    <timezone>");
-            xmlBuilder.AppendLine($"        <area>{tz.Area}</area>");
-            xmlBuilder.AppendLine($"        <language>{tz.Language}</language>");
-            xmlBuilder.AppendLine($"        <name>{tz.Name}</name>");
+            xmlBuilder.AppendLine($"        <area>{System.Security.SecurityElement.Escape(tz.Area)}</area>");
+            xmlBuilder.AppendLine($"        <language>{System.Security.SecurityElement.Escape(tz.Language)}</language>");
+            xmlBuilder.AppendLine($"        <name>{System.Security.SecurityElement.Escape(tz.Name)}</name>");
             xmlBuilder.AppendLine($"        <utc_offset>{tz.UtcOffset}</utc_offset>");
             xmlBuilder.AppendLine($"        <order>{tz.Order}</order>");
             xmlBuilder.AppendLine("    </timezone>");
         }
 
         xmlBuilder.AppendLine("</timezones>");
-        byte[] Agreement = Encoding.UTF8.GetBytes(xmlBuilder.ToString());
-        HttpContext.Response.ContentLength = Agreement.Length;
 
-        await HttpContext.Response.Body.WriteAsync(Agreement, 0, Agreement.Length);
+        byte[] payload = Encoding.UTF8.GetBytes(xmlBuilder.ToString());
+        HttpContext.Response.StatusCode = 200;
+        HttpContext.Response.ContentType = "application/xml;charset=UTF-8";
+        HttpContext.Response.ContentLength = payload.Length;
+
+        await HttpContext.Response.Body.WriteAsync(payload, 0, payload.Length);
     }
+
 }

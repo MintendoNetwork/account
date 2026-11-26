@@ -18,7 +18,13 @@ public static class Utils
         [JsonPropertyName("utc_offset")] public long UtcOffset { get; set; }
     }
 
-    // Error code maker for NNAS
+/*
+    Error code maker for the NNAS server.
+    
+    Example usage:
+    await Utils.CreateNNASError(HttpContext, 400, "1022", "The requested client was not found.", "client_id");
+    return;
+ */
     public static async Task CreateNNASError(HttpContext context, int statusCode, string errorCode, string message, string? cause = null)
     {
         context.Response.StatusCode = statusCode;

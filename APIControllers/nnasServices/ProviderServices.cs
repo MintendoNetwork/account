@@ -60,7 +60,7 @@ public class ProviderController : nnasService
             return;
         }
 
-        string tid = HttpContext.Request.Headers["X-Nintendo-Title-ID"].ToString();
+        string tid = HttpContext.Request.Headers["X-Nintendo-Title-ID"].ToString().Trim().Replace("\0", "");
         if (client_id is null || tid is null)
         {
             await Utils.CreateNNASError(HttpContext, 400, "1022", "The requested client was not found.", "client_id");
@@ -81,6 +81,9 @@ public class ProviderController : nnasService
         }
 
         bool maintenance = reader.GetBoolean(reader.GetOrdinal("maintenance_mode"));
+        string aesKey = reader.GetString(reader.GetOrdinal("aes_key"));
+        await reader.DisposeAsync();
+
         if (maintenance)
         {
             await Utils.CreateNNASError(HttpContext, 503, "2002", "The requested game server is under maintenance");
@@ -89,7 +92,7 @@ public class ProviderController : nnasService
 
         // TODO: Add access level check
         var now = DateTimeOffset.UtcNow;
-        byte[] token = Utils.CreateServiceToken(reader.GetString(reader.GetOrdinal("aes_key")), pid, tid, now, now.AddHours(1));
+        byte[] token = Utils.CreateServiceToken(aesKey, pid, tid, now, now.AddHours(1));
         string tokenhash = Convert.ToHexString(token).ToLowerInvariant();
 
         const string insertToken = @"

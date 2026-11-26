@@ -108,7 +108,7 @@ public static class DatabaseInitializer
 
         SELECT cron.schedule('cleanup-old-tokens', '*/5 * * * *', $$
             DELETE FROM oauthtokens        WHERE created_at < NOW() - INTERVAL '6 hours';
-            DELETE FROM independenttokens  WHERE created_at < NOW() - INTERVAL '24 hours';
+            DELETE FROM independenttokens  WHERE created_at < NOW() - INTERVAL '4 hours';
             DELETE FROM nextokens          WHERE created_at < NOW() - INTERVAL '2 hours';
         $$);
 ";
